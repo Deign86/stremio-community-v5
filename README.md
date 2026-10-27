@@ -138,10 +138,14 @@
 
 > **⏳ Note:** If you have stremio-desktop v4.x.x installed make sure to uninstall it first. Otherwise there might be issues.
 
-2. 🚀 **Linux, macOS**
+2. 🍎 **macOS**
+- Native app (WKWebView + libmpv), Intel and Apple Silicon, macOS 11+.
+- Build it yourself: see [docs/MACOS.md](docs/MACOS.md).
+
+3. 🐧 **Linux**
 - Coming soon!
 
-> **⏳ Note:** Linux and Mac release will take considerable time as they need their own build with OS specific technologies
+> **⏳ Note:** The Linux release will take considerable time as it needs its own build with OS specific technologies
 
 ## 🔍 **Mpv Upscalers**
 
