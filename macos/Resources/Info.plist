@@ -21,7 +21,11 @@
     <key>CFBundleShortVersionString</key>
     <string>__VERSION__</string>
     <key>CFBundleVersion</key>
-    <string>__VERSION__</string>
+    <string>__BUILD_VERSION__</string>
+    <key>SCUpdateFeedURL</key>
+    <string>__UPDATE_FEED_URL__</string>
+    <key>SCUpdatePublicKey</key>
+    <string>__UPDATE_PUBLIC_KEY__</string>
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>
     <key>LSApplicationCategoryType</key>

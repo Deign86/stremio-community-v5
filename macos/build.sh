@@ -5,13 +5,24 @@
 #   ARCH=universal ./build.sh  # Intel + Apple Silicon
 #   ARCH=arm64 ./build.sh      # Apple Silicon only
 #   ./build.sh dmg             # also create build/Stremio-Community-<ver>-<arch>.dmg
+#   ./build.sh zip             # also create the update archive build/Stremio-Community-<ver>-macos-<arch>.zip
+#
+# Optional environment:
+#   VERSION / BUILD_VERSION    override the version (default: CMakeLists.txt); BUILD_VERSION
+#                              may add a 4th component for Mac-only rebuilds, e.g. 5.0.22.1
+#   UPDATE_FEED_URL            https URL of the update manifest (see Sources/Updater.swift)
+#   UPDATE_PUBLIC_KEY          base64 Ed25519 public key (tools/sign-update.swift)
+#   The in-app updater stays off unless both are set.
 #
 # Needs only the Xcode Command Line Tools. Run ./fetch-deps.sh first.
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=..
 
-VERSION=$(sed -n 's/^project(stremio VERSION "\(.*\)")/\1/p' "$ROOT/CMakeLists.txt")
+VERSION="${VERSION:-$(sed -n 's/^project(stremio VERSION "\(.*\)")/\1/p' "$ROOT/CMakeLists.txt")}"
+BUILD_VERSION="${BUILD_VERSION:-$VERSION}"
+UPDATE_FEED_URL="${UPDATE_FEED_URL:-}"
+UPDATE_PUBLIC_KEY="${UPDATE_PUBLIC_KEY:-}"
 APP_NAME="Stremio Community"
 EXE="StremioCommunity"
 MIN_MACOS="11.0"
@@ -53,7 +64,9 @@ done
 lipo -create "${BINS[@]}" -output "$APP/Contents/MacOS/$EXE"
 
 echo "==> Bundling"
-sed "s/__VERSION__/$VERSION/g" Resources/Info.plist > "$APP/Contents/Info.plist"
+sed -e "s|__VERSION__|$VERSION|g" -e "s|__BUILD_VERSION__|$BUILD_VERSION|g" \
+    -e "s|__UPDATE_FEED_URL__|$UPDATE_FEED_URL|g" -e "s|__UPDATE_PUBLIC_KEY__|$UPDATE_PUBLIC_KEY|g" \
+    Resources/Info.plist > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 for lib in vendor/mpv-libs/*.dylib; do
@@ -86,10 +99,10 @@ codesign --force --sign - "$APP/Contents/Resources/node" 2>/dev/null
 codesign --force --sign - "$APP"
 codesign --verify --deep "$APP" && echo "signature ok"
 
-echo "==> Built $APP ($(du -sh "$APP" | cut -f1), $LABEL)"
+echo "==> Built $APP $BUILD_VERSION ($(du -sh "$APP" | cut -f1), $LABEL, updates: ${UPDATE_FEED_URL:-off})"
 
-if [ "${1:-}" = "dmg" ]; then
-  DMG="$BUILD/Stremio-Community-$VERSION-$LABEL.dmg"
+if [[ " $* " == *" dmg "* ]]; then
+  DMG="$BUILD/Stremio-Community-$BUILD_VERSION-$LABEL.dmg"
   STAGE="$OBJ/dmg"
   rm -rf "$STAGE" "$DMG"
   mkdir -p "$STAGE"
@@ -97,4 +110,11 @@ if [ "${1:-}" = "dmg" ]; then
   ln -s /Applications "$STAGE/Applications"
   hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
   echo "==> Built $DMG ($(du -sh "$DMG" | cut -f1))"
+fi
+
+if [[ " $* " == *" zip "* ]]; then
+  ZIP="$BUILD/Stremio-Community-$BUILD_VERSION-macos-$LABEL.zip"
+  rm -f "$ZIP"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+  echo "==> Built $ZIP ($(du -sh "$ZIP" | cut -f1))"
 fi

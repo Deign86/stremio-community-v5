@@ -7,6 +7,7 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
     let server = StreamingServer()
     let webui = WebUIServer()
     let discord = DiscordRPC()
+    let updater = Updater()
     lazy var bridge = ShellBridge(origin: webui.origin)
     var window: MainWindowController!
 
@@ -60,6 +61,7 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
             server.onStarted = { [weak self] in self?.bridge.enqueue("ServerStarted", ["type": "ServerStarted"]) }
             server.start()
         }
+        if settings.autoUpdate { startAutomaticUpdates() }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
@@ -197,7 +199,12 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
             NSApp.terminate(nil)
 
         case "update-requested":
-            Log.info("[APP]: update-requested ignored (no macOS updater)")
+            // "Update" in the web UI's update dialog.
+            if updater.readyVersion != nil {
+                installUpdate()
+            } else {
+                checkForUpdates(nil)
+            }
 
         default:
             Log.info("[APP]: Unknown event=\(ev)")
@@ -402,6 +409,56 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
         discord.enabled = settings.discordRPC
     }
 
+    @objc func toggleAutoUpdate(_ sender: Any?) {
+        settings.autoUpdate.toggle()
+        settings.save()
+        if settings.autoUpdate { startAutomaticUpdates() } else { updater.stopAutomaticChecks() }
+    }
+
+    // MARK: Updates
+
+    private func startAutomaticUpdates() {
+        // Like the Windows build: show the web UI's update dialog once the update is downloaded.
+        updater.startAutomaticChecks { [weak self] version in
+            Log.info("[UPDATER]: Offering \(version) in the web UI")
+            self?.bridge.enqueue("requestUpdate", ["type": "requestUpdate", "version": version])
+        }
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        updater.check { [weak self] result in
+            let alert = NSAlert()
+            switch result {
+            case .upToDate(let v):
+                alert.messageText = "You're up to date"
+                alert.informativeText = "\(AppInfo.name) \(v) is the newest version."
+                alert.runModal()
+            case .failed(let why):
+                alert.messageText = "Couldn't check for updates"
+                alert.informativeText = why
+                alert.runModal()
+            case .ready(let v):
+                alert.messageText = "\(AppInfo.name) \(v) is ready to install"
+                alert.informativeText = "You have \(Updater.currentVersion). The app will restart to finish updating."
+                alert.addButton(withTitle: "Restart Now")
+                alert.addButton(withTitle: "Later")
+                if alert.runModal() == .alertFirstButtonReturn { self?.installUpdate() }
+            }
+        }
+    }
+
+    private func installUpdate() {
+        if updater.installAndRelaunch() { return }
+        let alert = NSAlert()
+        alert.messageText = "The update couldn't be installed automatically"
+        alert.informativeText = "\(AppInfo.name) can't replace itself in \(Bundle.main.bundleURL.deletingLastPathComponent().path). Move the app to your Applications folder, or download the new version manually."
+        alert.addButton(withTitle: "OK")
+        if updater.releaseNotes != nil { alert.addButton(withTitle: "Open Download Page") }
+        if alert.runModal() == .alertSecondButtonReturn, let url = updater.releaseNotes {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     @objc func reloadPage(_ sender: Any?) { refresh(all: false) }
     @objc func fullRefresh(_ sender: Any?) { refresh(all: true) }
     @objc func toggleFullscreen(_ sender: Any?) { window.setFullscreen(!window.isFullscreen) }
@@ -424,7 +481,7 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
             i.target = self
             return i
         }
-        return [
+        var items = [
             item("Always on Top", #selector(toggleAlwaysOnTop(_:))),
             item("Picture in Picture", #selector(togglePiP(_:)), "p", [.command, .option]),
             .separator(),
@@ -433,10 +490,16 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
             item("Quit When Window Closes", #selector(toggleCloseOnExit(_:))),
             item("Use Dark Theme", #selector(toggleDarkTheme(_:))),
             item("Discord Rich Presence", #selector(toggleDiscord(_:))),
+        ]
+        if updater.isConfigured {
+            items.append(item("Check for Updates Automatically", #selector(toggleAutoUpdate(_:))))
+        }
+        items += [
             .separator(),
             item("Open mpv Config Folder", #selector(openConfigFolder(_:))),
             item("Open Logs Folder", #selector(openLogFolder(_:))),
         ]
+        return items
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -451,6 +514,9 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
             case #selector(toggleCloseOnExit(_:)): item.state = settings.closeOnExit ? .on : .off
             case #selector(toggleDarkTheme(_:)): item.state = settings.useDarkTheme ? .on : .off
             case #selector(toggleDiscord(_:)): item.state = settings.discordRPC ? .on : .off
+            case #selector(toggleAutoUpdate(_:)): item.state = settings.autoUpdate ? .on : .off
+            case #selector(checkForUpdates(_:)):
+                item.title = updater.readyVersion.map { "Install Update \($0)…" } ?? "Check for Updates…"
             default: break
             }
         }
@@ -473,6 +539,11 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
         menu.addItem(.separator())
         optionItems().forEach { $0.keyEquivalent = ""; menu.addItem($0) }
         menu.addItem(.separator())
+        if updater.isConfigured {
+            let check = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+            check.target = self
+            menu.addItem(check)
+        }
         let quit = NSMenuItem(title: "Quit \(AppInfo.name)", action: #selector(quit(_:)), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
@@ -485,7 +556,11 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
         let name = AppInfo.name
 
         let appMenu = NSMenu(title: name)
+        appMenu.delegate = self
         appMenu.addItem(withTitle: "About \(name)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        if updater.isConfigured {
+            appMenu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "").target = self
+        }
         appMenu.addItem(.separator())
         let options = NSMenu(title: "Options")
         options.delegate = self

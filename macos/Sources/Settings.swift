@@ -67,6 +67,7 @@ final class Settings {
     var pauseOnMinimize = true
     var pauseOnLostFocus = false
     var discordRPC = true
+    var autoUpdate = true
     var initialVolume = 50
     var alwaysOnTop = false
 
@@ -102,6 +103,7 @@ final class Settings {
         pauseOnMinimize = bool("General", "PauseOnMinimize", true)
         pauseOnLostFocus = bool("General", "PauseOnLostFocus", false)
         discordRPC = bool("General", "DiscordRPC", true)
+        autoUpdate = bool("General", "AutoUpdate", true)
         alwaysOnTop = bool("General", "AlwaysOnTop", false)
         initialVolume = int("MPV", "InitialVolume", 50)
 
@@ -134,6 +136,7 @@ final class Settings {
         ini.set("General", "PauseOnLostFocus", pauseOnLostFocus ? "1" : "0")
         ini.set("General", "AllowZoom", allowZoom ? "1" : "0")
         ini.set("General", "DiscordRPC", discordRPC ? "1" : "0")
+        ini.set("General", "AutoUpdate", autoUpdate ? "1" : "0")
         ini.set("General", "AlwaysOnTop", alwaysOnTop ? "1" : "0")
         ini.set("General", "ThumbFastHeight", String(thumbFastHeight))
         ini.set("MPV", "InitialVolume", String(initialVolume))
