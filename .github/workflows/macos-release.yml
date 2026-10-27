@@ -1,0 +1,142 @@
+# Fork-only: follows Zaarrg/stremio-community-v5 releases and publishes signed macOS builds
+# that the in-app updater installs (see docs/MACOS.md → Updates).
+#
+# Daily: if upstream published a new release, merge its tag into this fork's webview-windows
+# branch, build Intel + Apple Silicon apps, and release them as v<version>-macos.
+# Manual run: set "revision" to ship a Mac-only fix as <version>.<revision>.
+#
+# Needs the repository secret MACOS_UPDATE_PRIVATE_KEY (from tools/sign-update.swift generate).
+name: macOS release
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: "Mac-only rebuild number (0 = upstream version as is)"
+        default: "0"
+      force:
+        description: "Rebuild even if this version is already released"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: Zaarrg/stremio-community-v5
+  BRANCH: webview-windows
+  UPDATE_PUBLIC_KEY: ENiBKXetx/c64EdeJsMBVdJ6RHrySnYu0ii7cj7RJxc=
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BRANCH }}
+          fetch-depth: 0
+
+      - name: Merge latest upstream release
+        id: sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ inputs.revision || '0' }}
+        run: |
+          tag=$(gh release view --repo "$UPSTREAM_REPO" --json tagName -q .tagName)
+          echo "Latest upstream release: $tag"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags "https://github.com/$UPSTREAM_REPO.git" "refs/tags/$tag:refs/tags/upstream/$tag"
+          if git merge-base --is-ancestor "upstream/$tag" HEAD; then
+            echo "Branch already contains $tag"
+          else
+            git merge --no-edit -m "Merge upstream release $tag" "upstream/$tag"
+            git push origin "HEAD:$BRANCH"
+          fi
+          version=$(sed -n 's/^project(stremio VERSION "\(.*\)")/\1/p' CMakeLists.txt)
+          build="$version"
+          if [ "$REVISION" != "0" ]; then build="$version.$REVISION"; fi
+          {
+            echo "upstream_tag=$tag"
+            echo "version=$version"
+            echo "build=$build"
+            echo "release_tag=v$build-macos"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Skip if already released
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          if gh release view "${{ steps.sync.outputs.release_tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [ "$FORCE" != "true" ]; then
+            echo "${{ steps.sync.outputs.release_tag }} already exists, nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch dependencies
+        if: steps.check.outputs.skip == 'false'
+        run: ./macos/fetch-deps.sh
+
+      - name: Build
+        if: steps.check.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.sync.outputs.version }}
+          BUILD_VERSION: ${{ steps.sync.outputs.build }}
+          UPDATE_FEED_URL: https://github.com/${{ github.repository }}/releases/latest/download/macos-update.json
+        run: |
+          mkdir -p dist
+          for arch in x86_64 arm64; do
+            ARCH=$arch ./macos/build.sh dmg zip
+            mv macos/build/*.dmg macos/build/*.zip dist/
+          done
+          ls -lh dist
+
+      - name: Sign and write update manifest
+        if: steps.check.outputs.skip == 'false'
+        env:
+          PRIVATE_KEY: ${{ secrets.MACOS_UPDATE_PRIVATE_KEY }}
+          BUILD: ${{ steps.sync.outputs.build }}
+          TAG: ${{ steps.sync.outputs.release_tag }}
+        run: |
+          if [ -z "$PRIVATE_KEY" ]; then echo "::error::MACOS_UPDATE_PRIVATE_KEY secret is not set"; exit 1; fi
+          key="$RUNNER_TEMP/update.key"
+          printf '%s' "$PRIVATE_KEY" > "$key"
+          trap 'rm -f "$key"' EXIT
+          [ "$(swift macos/tools/sign-update.swift public "$key")" = "$UPDATE_PUBLIC_KEY" ] \
+            || { echo "::error::Private key does not match UPDATE_PUBLIC_KEY"; exit 1; }
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          assets='{}'
+          for arch in x86_64 arm64; do
+            zip="Stremio-Community-$BUILD-macos-$arch.zip"
+            sha=$(shasum -a 256 "dist/$zip" | cut -d' ' -f1)
+            sig=$(swift macos/tools/sign-update.swift sign "$key" "$BUILD:$arch:$sha")
+            assets=$(jq -c --arg a "$arch" --arg u "$base/$zip" --arg s "$sha" --arg g "$sig" \
+              '. + {($a): {url: $u, sha256: $s, signature: $g}}' <<< "$assets")
+          done
+          jq -n --arg v "$BUILD" --arg n "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" \
+            --argjson a "$assets" '{version: $v, notes: $n, assets: $a}' > dist/macos-update.json
+          cat dist/macos-update.json
+
+      - name: Publish release
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD: ${{ steps.sync.outputs.build }}
+          TAG: ${{ steps.sync.outputs.release_tag }}
+          UPSTREAM_TAG: ${{ steps.sync.outputs.upstream_tag }}
+        run: |
+          notes="macOS build of Stremio Community $BUILD, based on upstream release [$UPSTREAM_TAG](https://github.com/$UPSTREAM_REPO/releases/tag/$UPSTREAM_TAG).
+
+          Download the \`.dmg\` for your Mac (\`arm64\` = Apple Silicon, \`x86_64\` = Intel) and drag the app to Applications. On first launch, right-click the app → **Open**. Installed copies update themselves."
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$(git rev-parse HEAD)" \
+            --title "Stremio Community $BUILD for macOS" --notes "$notes" --latest
