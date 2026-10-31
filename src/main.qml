@@ -45,6 +45,8 @@ ApplicationWindow {
         id: mpv
         anchors.fill: parent
         onMpvEvent: function(ev, args) { transport.event(ev, args) }
+        // Keep the display awake for exactly as long as mpv is playing (incl. fullscreen with no input)
+        onPlayingChanged: shouldDisableScreensaver(mpv.playing)
     }
 
     //
@@ -220,12 +222,7 @@ ApplicationWindow {
             if (ev === "quit") quitApp()
             if (ev === "app-ready") transport.flushQueue()
             if (ev === "mpv-command" && args && args[0] !== "run") mpv.command(args)
-            if (ev === "mpv-set-prop") {
-                mpv.setProperty(args[0], args[1]);
-                if (args[0] === "pause") {
-                    shouldDisableScreensaver(!args[1]);
-                }
-            }
+            if (ev === "mpv-set-prop") mpv.setProperty(args[0], args[1])
             if (ev === "mpv-observe-prop") mpv.observeProperty(args)
             if (ev === "control-event") wakeupEvent()
             if (ev === "wakeup") wakeupEvent()
@@ -872,7 +869,7 @@ ApplicationWindow {
     }
 
     function isPlayerPlaying() {
-        return root.visible && typeof(mpv.getProperty("path"))==="string" && !mpv.getProperty("pause")
+        return root.visible && mpv.playing
     }
 
     // Received external message

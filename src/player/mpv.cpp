@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 #include <clocale>
+#include <cstring>
 
 #include <QObject>
 #include <QJsonObject>
@@ -23,6 +24,9 @@
 
 namespace
 {
+// reply_userdata of the properties the shell observes for itself; the web UI observes with 0
+const uint64_t PLAYBACK_STATE_OBSERVER = 1;
+
 void on_mpv_redraw(void *ctx)
 {
     MpvObject::on_update(ctx);
@@ -199,6 +203,10 @@ void MpvObject::initialize_mpv() {
     foreach (const QString &name, observed_properties) {
         mpv_observe_property(mpv, 0, name.toStdString().c_str(), MPV_FORMAT_NODE);
     }
+
+    // Track whether something is actually playing, so the screensaver/display sleep can follow it
+    mpv_observe_property(mpv, PLAYBACK_STATE_OBSERVER, "pause", MPV_FORMAT_FLAG);
+    mpv_observe_property(mpv, PLAYBACK_STATE_OBSERVER, "idle-active", MPV_FORMAT_FLAG);
 }
 
 void MpvObject::on_update(void *ctx)
@@ -262,6 +270,10 @@ void MpvObject::handle_mpv_event(mpv_event *event) {
         // case MPV_EVENT_CLIENT_MESSAGE:
         case MPV_EVENT_PROPERTY_CHANGE: {
             mpv_event_property *prop = (mpv_event_property *) event->data;
+            if (event->reply_userdata == PLAYBACK_STATE_OBSERVER) {
+                handle_playback_state(prop);
+                break;
+            }
             eventJson["name"] = QString(prop->name);
 
             // NOTE: because we always observe as node, we can handle only that case; we are handling the others, to be safe :)
@@ -322,6 +334,19 @@ void MpvObject::handle_mpv_event(mpv_event *event) {
             break;
         }
     }
+}
+
+void MpvObject::handle_playback_state(mpv_event_property *prop) {
+    const bool wasPlaying = isPlaying();
+    const bool value = prop->format == MPV_FORMAT_FLAG && *(int *)prop->data;
+
+    if (std::strcmp(prop->name, "pause") == 0)
+        paused = value;
+    else if (std::strcmp(prop->name, "idle-active") == 0)
+        idle = value;
+
+    if (isPlaying() != wasPlaying)
+        Q_EMIT playingChanged();
 }
 
 QVariant MpvObject::getProperty(const QString& name) {

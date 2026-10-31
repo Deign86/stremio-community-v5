@@ -11,6 +11,24 @@ static QDBusInterface screenSaverInterface("org.freedesktop.ScreenSaver",
 //http://www.cocoachina.com/macdev/cocoa/2010/0201/453.html
 #include <CoreServices/CoreServices.h>
 #import <IOKit/pwr_mgt/IOPMLib.h>
+
+static bool holdAssertion(CFStringRef type, IOPMAssertionID &id)
+{
+    if (id != kIOPMNullAssertionID)
+        return true;
+    if (IOPMAssertionCreateWithName(type, kIOPMAssertionLevelOn, CFSTR("Stremio is playing video"), &id) == kIOReturnSuccess)
+        return true;
+    id = kIOPMNullAssertionID;
+    return false;
+}
+
+static void releaseAssertion(IOPMAssertionID &id)
+{
+    if (id == kIOPMNullAssertionID)
+        return;
+    IOPMAssertionRelease(id);
+    id = kIOPMNullAssertionID;
+}
 #endif //Q_OS_MAC
 #ifdef Q_OS_WIN
 #include <QAbstractEventDispatcher>
@@ -173,22 +191,16 @@ bool ScreenSaver::enable(bool yes)
     }
 #endif //Q_OS_LINUX
 #if defined(Q_OS_MAC) && !defined(Q_OS_IOS)
-    // kIOPMAssertionTypeNoDisplaySleep prevents display sleep,
-    // kIOPMAssertionTypeNoIdleSleep prevents idle sleep
-
-    // reasonForActivity is a descriptive string used by the system whenever it needs
-    // to tell the user why the system is not sleeping.
-    IOReturn success;
+    // PreventUserIdleDisplaySleep keeps the display from dimming/sleeping and the screensaver from starting,
+    // PreventUserIdleSystemSleep keeps the Mac itself from idle sleeping. Both show up in `pmset -g assertions`.
     if (!yes) {
-        CFStringRef reasonForActivity = CFSTR("Disable Screensaver");
-        success = IOPMAssertionCreateWithName(kIOPMAssertionTypeNoDisplaySleep, kIOPMAssertionLevelOn,
-                                              reasonForActivity, &assertionID);
+        rv = holdAssertion(kIOPMAssertionTypePreventUserIdleDisplaySleep, displayAssertionID);
+        rv = holdAssertion(kIOPMAssertionTypePreventUserIdleSystemSleep, systemAssertionID) && rv;
     } else {
-        success = IOPMAssertionRelease(assertionID);
+        releaseAssertion(displayAssertionID);
+        releaseAssertion(systemAssertionID);
         rv = true;
     }
-
-    rv = success == kIOReturnSuccess;
 #endif //Q_OS_MAC
     if (!rv) {
         qWarning("Failed to enable/disable screen saver (enabled: %d)", yes);

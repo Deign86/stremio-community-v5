@@ -25,7 +25,8 @@ private:
     uint32_t cookieID;
 #endif //Q_OS_LINUX
 #if defined(Q_OS_MAC) && !defined(Q_OS_IOS)
-    IOPMAssertionID assertionID;
+    IOPMAssertionID displayAssertionID = kIOPMNullAssertionID;
+    IOPMAssertionID systemAssertionID = kIOPMNullAssertionID;
 #endif
 };
 
