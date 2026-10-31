@@ -54,7 +54,7 @@ thin() {
 echo "==> Compiling (${ARCHS[*]})"
 SWIFT_FLAGS=(-O -swift-version 5 -import-objc-header Sources/Bridge.h -I vendor/include
   -L vendor/mpv-libs -lmpv.2
-  -framework AppKit -framework WebKit -framework OpenGL -framework QuartzCore -framework MediaPlayer
+  -framework AppKit -framework WebKit -framework OpenGL -framework QuartzCore -framework MediaPlayer -framework IOKit
   -Xlinker -rpath -Xlinker @executable_path/../Frameworks)
 BINS=()
 for a in "${ARCHS[@]}"; do

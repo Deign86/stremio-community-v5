@@ -8,6 +8,7 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
     let webui = WebUIServer()
     let discord = DiscordRPC()
     let updater = Updater()
+    let sleepGuard = SleepGuard()
     lazy var bridge = ShellBridge(origin: webui.origin)
     var window: MainWindowController!
 
@@ -343,6 +344,7 @@ final class AppController: NSObject, NSApplicationDelegate, MainWindowDelegate, 
         default:
             return
         }
+        sleepGuard.set(active: hasFile && !isPaused)
         let center = MPNowPlayingInfoCenter.default()
         if hasFile {
             center.playbackState = isPaused ? .paused : .playing
