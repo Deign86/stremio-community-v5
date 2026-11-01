@@ -1,7 +1,7 @@
 # Fork-only: follows Zaarrg/stremio-community-v5 releases and publishes signed macOS builds
 # that the in-app updater installs (see docs/MACOS.md → Updates).
 #
-# Daily: if upstream published a new release, merge its tag into this fork's webview-windows
+# Daily: if upstream published a new release, merge its tag into this fork's main
 # branch, build Intel + Apple Silicon apps, and release them as v<version>-macos.
 # Manual run: set "revision" to ship a Mac-only fix as <version>.<revision>.
 #
@@ -30,7 +30,7 @@ concurrency:
 
 env:
   UPSTREAM_REPO: Zaarrg/stremio-community-v5
-  BRANCH: webview-windows
+  BRANCH: main
   UPDATE_PUBLIC_KEY: ENiBKXetx/c64EdeJsMBVdJ6RHrySnYu0ii7cj7RJxc=
 
 jobs:
